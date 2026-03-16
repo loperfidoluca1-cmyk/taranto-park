@@ -1,0 +1,252 @@
+﻿<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TARANTO PARK PRO | Global Grid</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        :root { --p: #3b82f6; --s: #10b981; --d: #06080f; --glass: rgba(10, 15, 25, 0.9); }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: var(--d); color: white; margin:0; overflow:hidden; }
+        
+        #map { height: 100vh; width: 100%; z-index: 1; }
+        .leaflet-container { background: #06080f !important; }
+
+        /* UI */
+        .ui-overlay { position: fixed; inset: 0; z-index: 1000; pointer-events: none; padding: 1.2rem; display: flex; flex-direction: column; }
+        .ui-overlay * { pointer-events: auto; }
+        .glass { background: var(--glass); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.05); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7); }
+
+        /* Autocomplete API Style */
+        #search-results { position: absolute; top: 100%; left: 0; right: 0; margin-top: 10px; max-height: 250px; overflow-y: auto; display: none; z-index: 3000; border-radius: 20px; }
+        .result-item { padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.03); cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 12px; }
+        .result-item:hover { background: rgba(59, 130, 246, 0.2); }
+
+        /* Screens */
+        .screen { position: fixed; inset: 0; background: rgba(4, 6, 12, 0.99); z-index: 4000; display: none; flex-direction: column; align-items: center; justify-content: center; padding: 25px; }
+        .screen.active { display: flex; }
+
+        /* Area Libera Blur */
+        .free-zone-circle { fill: #10b981; fill-opacity: 0.12; stroke: #10b981; stroke-width: 2; stroke-dasharray: 8, 8; animation: rotate 30s linear infinite; }
+        @keyframes rotate { from { stroke-dashoffset: 200; } to { stroke-dashoffset: 0; } }
+
+        /* Pulsanti */
+        .btn-action { transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .btn-action:active { transform: scale(0.92); }
+        
+        .loader { width: 20px; height: 20px; border: 3px solid #FFF; border-bottom-color: transparent; border-radius: 50%; display: inline-block; box-sizing: border-box; animation: rotation 1s linear infinite; }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <div class="ui-overlay">
+        <div class="flex justify-between items-start">
+            <div class="glass p-4 rounded-3xl">
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                    <h1 class="text-xl font-800 tracking-tighter italic">TARANTO<span class="text-blue-500">PARK</span></h1>
+                </div>
+                <p class="text-[8px] uppercase tracking-[0.4em] text-slate-500 font-bold mt-1">Live Intelligence Service</p>
+            </div>
+            
+            <div class="glass px-6 py-3 rounded-full flex items-center gap-3 border border-blue-500/20">
+                <i class="fas fa-wallet text-yellow-500"></i>
+                <span id="balance-val" class="font-bold text-lg tracking-tight">€ 12.50</span>
+            </div>
+        </div>
+
+        <div class="mt-auto space-y-3">
+            <div id="status-bar" class="glass p-4 rounded-3xl text-[11px] text-slate-300 border-l-4 border-blue-500 max-w-xs transition-all opacity-0">
+                <b class="text-blue-400 uppercase block mb-1">Sistema Attivo</b>
+                Avvicinati a un'area per sbloccare l'indirizzo.
+            </div>
+            <button onclick="openScreen('leave-screen')" class="btn-action w-full bg-blue-600 p-6 rounded-[32px] font-800 text-xl flex items-center justify-center gap-4 shadow-2xl shadow-blue-900/40">
+                <i class="fas fa-satellite-dish"></i> SEGNALA USCITA
+            </button>
+        </div>
+    </div>
+
+    <div id="leave-screen" class="screen">
+        <div class="w-full max-w-md">
+            <div class="text-center mb-8">
+                <div class="inline-block p-4 bg-blue-500/10 rounded-full mb-4">
+                    <i class="fas fa-map-marked-alt text-3xl text-blue-500"></i>
+                </div>
+                <h2 class="text-3xl font-800">Cerca Indirizzo</h2>
+                <p class="text-slate-400 text-sm">Inserisci la via precisa di Taranto</p>
+            </div>
+            
+            <div class="relative mb-6">
+                <div class="glass p-5 rounded-3xl flex items-center gap-4 border-2 border-transparent focus-within:border-blue-500/50 transition-all">
+                    <i class="fas fa-search text-blue-500"></i>
+                    <input type="text" id="addr-input" oninput="fetchAddresses()" placeholder="Inizia a scrivere (es. Via Solito)..." class="bg-transparent w-full outline-none font-bold text-lg">
+                    <div id="search-loader" class="hidden"><span class="loader"></span></div>
+                </div>
+                <div id="search-results" class="glass shadow-2xl"></div>
+            </div>
+
+            <div id="confirm-card" class="hidden glass p-6 rounded-3xl mb-8 animate-in fade-in zoom-in duration-300">
+                <div class="flex items-start gap-4">
+                    <i class="fas fa-check-circle text-green-500 text-2xl mt-1"></i>
+                    <div>
+                        <p class="text-[10px] uppercase text-slate-500 font-bold tracking-widest">Posizione Convalidata</p>
+                        <p id="addr-display" class="font-bold text-lg leading-tight"></p>
+                    </div>
+                </div>
+            </div>
+
+            <button id="pub-btn" onclick="publishSpot()" disabled class="btn-action w-full bg-slate-800 p-6 rounded-[30px] font-800 text-xl opacity-20 cursor-not-allowed">
+                PUBBLICA SULLA GRID
+            </button>
+            <button onclick="closeScreens()" class="w-full mt-6 text-slate-500 font-bold uppercase text-xs tracking-[0.2em]">Annulla</button>
+        </div>
+    </div>
+
+    <div id="reserve-screen" class="screen">
+        <div class="glass p-10 rounded-[50px] w-full max-w-sm text-center">
+            <div id="lock-icon" class="w-24 h-24 bg-slate-900 rounded-full flex items-center justify-center mx-auto mb-6 border border-white/5">
+                <i class="fas fa-lock text-4xl text-slate-700"></i>
+            </div>
+            <h2 class="text-2xl font-800 mb-2">Area Protetta</h2>
+            <p id="dist-txt" class="text-slate-400 text-sm mb-8 leading-relaxed"></p>
+            
+            <div class="grid grid-cols-2 gap-4 mb-8">
+                <div class="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
+                    <p class="text-[9px] uppercase text-slate-500">Costo</p>
+                    <p class="font-bold">€ 1.00</p>
+                </div>
+                <div class="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
+                    <p class="text-[9px] uppercase text-slate-500">Rimborso</p>
+                    <p class="font-bold text-green-400">€ 0.50</p>
+                </div>
+            </div>
+
+            <button id="reserve-btn" onclick="confirmReservation()" disabled class="btn-action w-full bg-blue-600 p-5 rounded-3xl font-800 text-lg shadow-xl shadow-blue-900/30">
+                SBLOCCA INDIRIZZO
+            </button>
+            <button onclick="closeScreens()" class="mt-6 text-slate-500 font-bold text-xs uppercase tracking-widest">Torna alla Mappa</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // INIT MAP
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([40.4735, 17.2355], 16);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+        let balance = 12.50;
+        let myLocation = [40.4735, 17.2355];
+        let activeSpot = null;
+        let searchTimeout;
+
+        // API RICERCA REAL-TIME (OpenStreetMap Nominatim)
+        async function fetchAddresses() {
+            const query = document.getElementById('addr-input').value;
+            const resDiv = document.getElementById('search-results');
+            const loader = document.getElementById('search-loader');
+            
+            if (query.length < 4) { resDiv.style.display = 'none'; return; }
+            
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                loader.classList.remove('hidden');
+                try {
+                    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query},Taranto&addressdetails=1&limit=5`);
+                    const data = await response.json();
+                    
+                    resDiv.innerHTML = '';
+                    if (data.length > 0) {
+                        resDiv.style.display = 'block';
+                        data.forEach(place => {
+                            const item = document.createElement('div');
+                            item.className = 'result-item';
+                            item.innerHTML = `<i class="fas fa-location-arrow text-blue-500"></i> <div><p class="font-bold text-sm">${place.display_name.split(',')[0]}</p><p class="text-[10px] text-slate-500">${place.display_name}</p></div>`;
+                            item.onclick = () => selectLocation(place);
+                            resDiv.appendChild(item);
+                        });
+                    }
+                } catch (e) { console.error("Errore API", e); }
+                loader.classList.add('hidden');
+            }, 500);
+        }
+
+        function selectLocation(place) {
+            document.getElementById('search-results').style.display = 'none';
+            document.getElementById('addr-input').value = place.display_name.split(',')[0];
+            document.getElementById('addr-display').innerText = place.display_name;
+            document.getElementById('confirm-card').classList.remove('hidden');
+            
+            const btn = document.getElementById('pub-btn');
+            btn.disabled = false;
+            btn.classList.replace('bg-slate-800', 'bg-green-600');
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+
+            activeSpot = { lat: parseFloat(place.lat), lng: parseFloat(place.lon), addr: place.display_name };
+        }
+
+        function publishSpot() {
+            const circle = L.circle([activeSpot.lat, activeSpot.lng], {
+                radius: 100,
+                className: 'free-zone-circle'
+            }).addTo(map);
+
+            activeSpot.circle = circle;
+            circle.on('click', () => showReserve(activeSpot));
+
+            closeScreens();
+            map.flyTo([activeSpot.lat, activeSpot.lng], 17);
+            document.getElementById('status-bar').style.opacity = '1';
+        }
+
+        function showReserve(spot) {
+            activeSpot = spot;
+            const dist = map.distance(myLocation, [spot.lat, spot.lng]);
+            openScreen('reserve-screen');
+
+            const btn = document.getElementById('reserve-btn');
+            const icon = document.getElementById('lock-icon');
+            const txt = document.getElementById('dist-txt');
+
+            if (dist <= 150) {
+                txt.innerHTML = `<span class="text-green-500 font-bold text-lg uppercase">Sei in Prossimità</span><br>Sblocca ora l'indirizzo esatto.`;
+                icon.innerHTML = `<i class="fas fa-unlock text-green-500 animate-bounce"></i>`;
+                icon.classList.add('border-green-500/50');
+                btn.disabled = false;
+            } else {
+                txt.innerHTML = `Sei troppo lontano (${Math.round(dist)}m).<br>Avvicinati a meno di 100m per pagare e vedere.`;
+                icon.innerHTML = `<i class="fas fa-lock text-slate-700"></i>`;
+                icon.classList.remove('border-green-500/50');
+                btn.disabled = true;
+            }
+        }
+
+        function confirmReservation() {
+            balance -= 1.0;
+            document.getElementById('balance-val').innerText = `€ ${balance.toFixed(2)}`;
+            
+            map.removeLayer(activeSpot.circle);
+            const redIcon = L.divIcon({ className: '', html: `<div style="background:#ef4444; width:20px; height:20px; border-radius:50%; border:3px solid white; box-shadow:0 0 20px #ef4444;"></div>` });
+            L.marker([activeSpot.lat, activeSpot.lng], { icon: redIcon }).addTo(map);
+
+            closeScreens();
+            alert(`PAGAMENTO EFFETTUATO!\n\nPosizione Sbloccata: ${activeSpot.addr.split(',')[0]}\nRecati subito sul posto.`);
+        }
+
+        function openScreen(id) { document.getElementById(id).classList.add('active'); }
+        function closeScreens() { 
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById('confirm-card').classList.add('hidden');
+            document.getElementById('addr-input').value = '';
+        }
+    </script>
+</body>
+</html>
